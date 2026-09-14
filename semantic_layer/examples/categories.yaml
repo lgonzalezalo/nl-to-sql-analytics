@@ -1,0 +1,23 @@
+- question: "In the last 10 days, searches by origin category"
+  sql: >
+    SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category, COUNT(*) AS total
+    FROM fact_search_queries WHERE searched_at >= now() - INTERVAL 10 DAY
+    GROUP BY origin_category ORDER BY total DESC
+
+- question: "searchBox searches in the last 10 days"
+  sql: >
+    SELECT COUNT(*) FROM fact_search_queries
+    WHERE query_origin LIKE 'originA%' AND searched_at >= now() - INTERVAL 10 DAY
+
+- question: >
+    Daily evolution of searches for categories categoryA
+    in DEPLOYMENT_A over the last 30 days
+  sql: >
+    SELECT searched_at::date AS day,
+           splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+           COUNT(*) AS total
+    FROM fact_search_queries
+    WHERE deployment_id = 'DEPLOYMENT_A'
+      AND (query_origin LIKE 'categoryA')
+      AND searched_at >= now() - INTERVAL 30 DAY
+    GROUP BY day, origin_category ORDER BY day, origin_category

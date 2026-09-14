@@ -1,0 +1,44 @@
+- question: "How many searches had no results?"
+  sql: "SELECT COUNT(*) FROM fact_search_queries WHERE num_results = 0"
+
+- question: "How many searches had a fallback?"
+  sql: "SELECT COUNT(*) FROM fact_search_queries WHERE num_results = -1"
+
+- question: "How many searches had a fallback in DEPLOYMENT_A"
+  sql: "SELECT COUNT(*) FROM fact_search_queries WHERE deployment_id = 'DEPLOYMENT_A' AND num_results = -1"
+
+- question: "What are the 10 most frequent searches?"
+  sql: >
+    SELECT query_verbatim, COUNT(*) AS total FROM fact_search_queries
+    GROUP BY query_verbatim ORDER BY total DESC LIMIT 10
+
+- question: "How many unique sessions were there per language?"
+  sql: >
+    SELECT lang_facet, COUNT(DISTINCT session) AS sessions FROM fact_search_queries
+    GROUP BY lang_facet ORDER BY sessions DESC
+
+- question: "What percentage of searches had no results in the last 7 days?"
+  sql: >
+    SELECT (countIf(num_results = 0) * 100.0 / count(*)) AS pct_no_results
+    FROM fact_search_queries WHERE searched_at >= now() - INTERVAL 7 DAY
+
+- question: "How many searches did each instance make?"
+  sql: >
+    SELECT instance_id, COUNT(*) AS total_searches FROM fact_search_queries
+    GROUP BY instance_id ORDER BY total_searches DESC LIMIT 100
+
+- question: "In DEPLOYMENT_A, what is the no-results rate in the last 10 days"
+  sql: >
+    SELECT (countIf(num_results = 0) * 100.0 / count(*)) AS no_results_rate
+    FROM fact_search_queries WHERE deployment_id = 'DEPLOYMENT_A' AND searched_at >= now() - INTERVAL 10 DAY
+
+- question: "Top 10 no-results terms for clientA in the last 7 days"
+  sql: >
+    SELECT query_verbatim, COUNT(*) AS times FROM fact_search_queries
+    WHERE instance_id = 'client' AND num_results = 0 AND searched_at >= now() - INTERVAL 7 DAY
+    GROUP BY query_verbatim ORDER BY times DESC LIMIT 10
+
+- question: "How many searches did clientA make in the last 3 days"
+  sql: >
+    SELECT COUNT(*) FROM fact_search_queries
+    WHERE instance_id = 'clientA' AND searched_at >= now() - INTERVAL 3 DAY

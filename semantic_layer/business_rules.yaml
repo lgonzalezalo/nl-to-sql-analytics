@@ -1,0 +1,58 @@
+# Rules that do not belong to a single table — they apply when combining
+# fact_search_queries, fact_clicks and fact_add_to_carts (or when choosing
+# between a raw table and an aggregated one).
+
+join_rules:
+  - >
+    NEVER do a row-by-row JOIN between fact_search_queries, fact_clicks and fact_add_to_carts
+    (using search_query_id or session) — far too expensive at scale.
+  - >
+    ALWAYS follow this pattern to compare volumes or compute rates (CTR, conversion, etc.):
+      1. Aggregate fact_search_queries (by instance_id, and by origin_category/date if relevant)
+      2. Aggregate fact_clicks / fact_add_to_carts the same way
+      3. JOIN those two ALREADY-AGGREGATED results (LEFT JOIN from the higher-volume table)
+  - >
+    fact_search_queries uses searched_at for date; fact_clicks uses clicked_at;
+    fact_add_to_carts uses added_at. NEVER swap date columns between tables.
+  - >
+    "Client"/"store"/"instance" = ALWAYS instance_id, NEVER deployment_id, in any table.
+  - >
+    When joining 3+ tables (search + clicks + a2c) and selecting a shared column like
+    instance_id in the outer SELECT, ALWAYS prefix it with the table alias (e.g. s.instance_id),
+    NEVER use the bare column name — it's ambiguous when multiple joined tables share that
+    column name and ClickHouse will reject the query
+metric_formulas:
+  ctr: "total_clicks * 100.0 / total_searches (both already aggregated by the same dimension)"
+  click_to_cart_rate: "total_a2c * 100.0 / total_clicks"
+  full_funnel_conversion_rate: "total_a2c * 100.0 / total_searches"
+  no_result_rate: "countIf(num_results = 0) * 100.0 / count(*)"
+  fallback_rate: "countIf(num_results = -1) * 100.0 / count(*)"
+  average_click_position: "AVG(result_position) — ALWAYS report alongside median, p90 and MRR"
+  median_position: "quantile(0.5)(result_position)"
+  p90_position: "quantile(0.9)(result_position)"
+  pct_top_n: "countIf(result_position <= N-1) * 100.0 / count(*)"
+  mrr: "AVG(1.0 / (result_position + 1)) — NEVER 1.0/result_position (division by zero at 0)"
+  pct_first_page: "countIf(results_page <= 1) * 100.0 / count(*)"
+
+ranking_rules:
+  - >
+    For "the top/best/main X for each Y" (e.g. "top category per instance"): NEVER use a plain
+    GROUP BY + ORDER BY + global LIMIT (it favors the rows with the most total volume).
+    Use ROW_NUMBER() OVER (PARTITION BY Y ORDER BY metric DESC) in a subquery, and filter
+    WHERE ranking = 1 (or <= N) in the outer query.
+
+limit_rules:
+  - >
+    If the question specifies a concrete number of results ("top 10", "the 5 main ones"),
+    use THAT exact number in the LIMIT, not a generic limit.
+  - "If no number is given: LIMIT 100 by default for non-aggregated queries."
+
+interpretation_warnings:
+  - >
+    No rate/ratio (CTR, conversion, MRR) should be interpreted without also looking at the
+    absolute volume behind it — CTR values above 100% have been observed in low-volume
+    categories/instances (statistical noise, not a real signal).
+  - >
+    The current day (today) in any time series is ALWAYS incomplete — do not treat it as
+    comparable to full days when computing trends or minimums/maximums.
+  - "MRR = Mean Reciprocal Rank. NEVER Monthly/Mean Recurring Revenue."

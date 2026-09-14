@@ -1,0 +1,114 @@
+
+table: fact_search_queries
+description: >
+  Each row represents ONE search performed by a user.
+
+columns:
+  search_query_id:
+    type: String
+    meaning: "Unique identifier of the search. Key only, do not aggregate over it."
+
+  deployment_id:
+    type: String
+    meaning: >
+      Deployment/product where the search was made. Possible values: 'DEPLOYMENT_B', 'DEPLOYMENT_A'.
+      Never null. NOT a synonym for "client" — see instance_id.
+
+  instance_id:
+    type: String
+    meaning: >
+      = CLIENT / store. "Client", "store" and "instance" are ALWAYS synonyms of instance_id,
+      never of deployment_id. Never null.
+      Format depends on deployment_id:
+        - If deployment_id = 'DEPLOYMENT_A'   -> short alphanumeric name (e.g. 'client_demo', 'clientA'
+        - If deployment_id = 'DEPLOYMENT_B' -> short alphanumeric name (e.g. 'client_demo', 'client2')
+      If the question mentions a client by NAME (not a GUID), deployment_id is probably 'DEPLOYMENT_B'.
+
+  query_verbatim:
+    type: String
+    nullable: true
+    meaning: >
+      Exact text the user typed. It is the ONLY search-text field to use.
+      Always ignore: query_tokenized, query_normalized, query_canonical, query_facets (do not use them).
+      WARNING: it is case-sensitive in GROUP BY. If the question asks for "most searched terms"
+      in aggregate form, use lowerUTF8(query_verbatim) to unify variants, unless the exact
+      variants as typed are explicitly requested.
+
+  query_origin:
+    type: String
+    nullable: true
+    meaning: >
+      Origin of the search, format "category:subcategory" (except 'default', which has no subcategory).
+      Real observed values: xxx:xx, cat1.cat, ....
+    rules:
+      - "To filter ONE specific category: WHERE query_origin LIKE 'category%'"
+      - >
+        For several categories at once: FORBIDDEN to use query_origin IN (...). ALWAYS use LIKE
+        with OR: (query_origin LIKE 'cat1%' OR query_origin LIKE 'cat2%' ...). Use the CORRECT
+        names from the list of real values above, fixing user typos if any
+        
+      - >
+        To group/break down "by origin category" (the part before the ":"), ALWAYS use:
+        splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category
+      - >
+        IMPORTANT: query_origin is nullable. splitByChar fails with a type error if applied
+        directly on a nullable field — ALWAYS wrap it with coalesce(query_origin, 'unknown')
+        before using splitByChar.
+      - >
+        
+
+  num_results:
+    type: Int32
+    meaning: "Number of results returned by the search."
+    rules:
+      - "num_results > 0  -> the search DID have results"
+      - "num_results = 0  -> the search had NO results, and no fallback rescued it"
+      - >
+        num_results = -1 -> this row represents a VOIDED attempt: the search originally
+        failed under this origin_category, and a SEPARATE row (usually with a DIFFERENT
+        origin_category, e.g. ai_carousel) was created with the real fallback result.
+        This is NOT the same search "corrected" in place — it is two distinct rows.
+      - "Total with results:  COUNT(*) WHERE num_results > 0"
+      - "Total WITHOUT results (never rescued): COUNT(*) WHERE num_results = 0"
+      - "Total voided/fallback-triggering rows: COUNT(*) WHERE num_results = -1"
+      - >
+        "Total searches" (real searches, not counting voided fallback rows twice):
+        COUNT(*) WHERE num_results <> -1
+      - >
+        "No-results rate", "zero results", "% without results":
+        countIf(num_results = 0) * 100.0 / count(*).
+        NEVER invent columns like total_results or result — the only valid column is num_results.
+      - >
+        "Fallback rate": countIf(num_results = -1) * 100.0 / count(*)
+      - >
+        DEFAULT RULE for ANY category-based analysis (CTR by category, conversion by category,
+        top category, MRR by category, etc.): ALWAYS exclude num_results = -1 rows
+        (WHERE num_results <> -1) before grouping by origin_category. A voided row's
+        origin_category reflects where the search FAILED, not where it was resolved —
+        counting it would wrongly attribute a failure to an origin that a different
+        origin actually fixed.
+      - >
+        EXCEPTION: only when the question explicitly asks about "fallback rate by origin"
+        or "how often does origin X need a fallback", INCLUDE num_results = -1 rows and
+        group by their origin_category — this is the one case where the voided row itself
+        (and which origin triggered it) is exactly what's being measured.
+
+  query_page:
+    type: Int32
+    meaning: "Results page requested (0 = first page)."
+
+
+  session:
+    type: String
+    nullable: true
+    meaning: >
+      User session id. One session can contain several searches (several search_query_id).
+      For unique sessions: COUNT(DISTINCT session).
+      Do NOT use for JOIN with fact_clicks/fact_add_to_carts in this project (excluded for
+      operational cost) — always use prior aggregation by instance_id/date/category.
+
+  searched_at:
+    type: DateTime (UTC)
+    meaning: >
+      Date and time of the search. Never null. ALWAYS use this column for date filters on this
+      table (NEVER clicked_at or added_at, which belong to other tables).

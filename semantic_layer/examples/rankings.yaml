@@ -1,0 +1,10 @@
+- question: "In DEPLOYMENT_B top origin category for each instance in the last 2 days"
+  sql: >
+    SELECT instance_id, origin_category, total FROM (
+      SELECT instance_id, splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+             COUNT(*) AS total,
+             ROW_NUMBER() OVER (PARTITION BY instance_id ORDER BY COUNT(*) DESC) AS ranking
+      FROM fact_search_queries
+      WHERE deployment_id = 'DEPLOYMENT_B' AND searched_at >= now() - INTERVAL 2 DAY
+      GROUP BY instance_id, origin_category
+    ) WHERE ranking = 1 ORDER BY total DESC LIMIT 100

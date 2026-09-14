@@ -1,0 +1,94 @@
+
+- question: "searches, clicks and a2c for client client_demo in the last 7 days"
+  sql: >
+    SELECT s.total_searches, coalesce(c.total_clicks, 0) AS total_clicks,
+           coalesce(a.total_a2c, 0) AS total_a2c
+    FROM (SELECT COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE instance_id = 'client_demo' AND searched_at >= now() - INTERVAL 7 DAY) AS s,
+         (SELECT COUNT(*) AS total_clicks FROM fact_clicks
+          WHERE instance_id = 'client_demo' AND clicked_at >= now() - INTERVAL 7 DAY) AS c,
+         (SELECT COUNT(*) AS total_a2c FROM fact_add_to_carts
+          WHERE instance_id = 'client_demo' AND added_at >= now() - INTERVAL 7 DAY) AS a
+
+- question: "Calculate CTR, click-to-cart rate and full funnel conversion for client client_demo in the last 7 days"
+  sql: >
+    SELECT s.total_searches,
+           coalesce(c.total_clicks, 0) * 100.0 / s.total_searches AS ctr,
+           coalesce(a.total_a2c, 0) * 100.0 / c.total_clicks AS click_to_cart_rate,
+           coalesce(a.total_a2c, 0) * 100.0 / s.total_searches AS full_funnel_conversion_rate
+    FROM (SELECT COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE instance_id = 'client_demo' AND searched_at >= now() - INTERVAL 7 DAY) AS s,
+         (SELECT COUNT(*) AS total_clicks FROM fact_clicks
+          WHERE instance_id = 'client_demo' AND clicked_at >= now() - INTERVAL 7 DAY) AS c,
+         (SELECT COUNT(*) AS total_a2c FROM fact_add_to_carts
+          WHERE instance_id = 'client_demo' AND added_at >= now() - INTERVAL 7 DAY) AS a
+
+- question: "Dashboard: searches, clicks and a2c per instance in DEPLOYMENT_B in the last 3 days"
+  sql: >
+    SELECT s.instance_id, s.total_searches, coalesce(c.total_clicks, 0) AS total_clicks,
+           coalesce(a.total_a2c, 0) AS total_a2c
+    FROM (SELECT instance_id, COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_B' AND searched_at >= now() - INTERVAL 3 DAY
+          GROUP BY instance_id) AS s
+    LEFT JOIN (SELECT instance_id, COUNT(*) AS total_clicks FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_B' AND clicked_at >= now() - INTERVAL 3 DAY
+               GROUP BY instance_id) AS c ON s.instance_id = c.instance_id
+    LEFT JOIN (SELECT instance_id, COUNT(*) AS total_a2c FROM fact_add_to_carts
+               WHERE deployment_id = 'DEPLOYMENT_B' AND added_at >= now() - INTERVAL 3 DAY
+               GROUP BY instance_id) AS a ON s.instance_id = a.instance_id
+    ORDER BY s.total_searches DESC LIMIT 100
+
+- question: "Total searches in DEPLOYMENT_A in the last 7 days"
+  sql: >
+    SELECT COUNT(*) FROM fact_search_queries
+    WHERE deployment_id = 'DEPLOYMENT_A' AND num_results <> -1 AND searched_at >= now() - INTERVAL 7 DAY
+
+- question: "Queries with results in DEPLOYMENT_A in the last 7 days"
+  sql: >
+    SELECT COUNT(*) FROM fact_search_queries
+    WHERE deployment_id = 'DEPLOYMENT_A' AND num_results > 0 AND searched_at >= now() - INTERVAL 7 DAY
+
+
+- question: "How many searches had no results?"
+  sql: "SELECT COUNT(*) FROM fact_search_queries WHERE num_results = 0"
+
+- question: "What is the no-results rate in DEPLOYMENT_A?"
+  sql: >
+    SELECT (countIf(num_results = 0) * 100.0 / count(*)) AS no_results_rate
+    FROM fact_search_queries WHERE deployment_id = 'DEPLOYMENT_A'
+
+- question: "CTR by origin category in DEPLOYMENT_A  last 7 days"
+  sql: >
+    SELECT s.origin_category, coalesce(c.total_clicks, 0) * 100.0 / s.total_searches AS ctr
+    FROM (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                 COUNT(*) AS total_searches
+          FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_A' AND num_results <> -1
+            AND searched_at >= now() - INTERVAL 7 DAY
+          GROUP BY origin_category) AS s
+    LEFT JOIN (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                      COUNT(*) AS total_clicks
+               FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_A' AND clicked_at >= now() - INTERVAL 7 DAY
+               GROUP BY origin_category) AS c ON s.origin_category = c.origin_category
+    ORDER BY ctr DESC
+
+- question: "Fallback rate by origin category in DEPLOYMENT_A last 7 days"
+  sql: >
+    SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+           countIf(num_results = -1) * 100.0 / count(*) AS fallback_rate
+    FROM fact_search_queries
+    WHERE deployment_id = 'DEPLOYMENT_A' AND searched_at >= now() - INTERVAL 7 DAY
+    GROUP BY origin_category
+    ORDER BY fallback_rate DESC
+
+
+- question: "daily evolution of categories 1 and 2 "
+  sql: >
+    SELECT clicked_at::date AS day, splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+           COUNT(*) AS total_clicks
+    FROM fact_clicks
+    WHERE deployment_id = 'DEPLOYMENT_A'
+      AND (query_origin LIKE 'cat1' OR query_origin LIKE 'cat2'
+      AND clicked_at >= now() - INTERVAL 10 DAY
+    GROUP BY day, origin_category ORDER BY day, origin_category

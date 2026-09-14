@@ -1,0 +1,135 @@
+# field definition and join rules
+
+
+table: fact_add_to_carts
+description: >
+  Each row represents ONE "add to cart" event a user made on a product, after a search.
+  Same pattern and tagging pipeline as fact_clicks.
+
+columns:
+  add_to_cart_id:
+    type: String
+    meaning: "Unique identifier of the add-to-cart event. Key only, do not aggregate over it."
+
+  deployment_id:
+    type: String
+    meaning: >
+      Deployment/product where the add-to-cart happened. Values: 'DEPLOYMENT_B', 'DEPLOYMENT_A'.
+      Never null (sorting key). NOT a synonym for "client" — see instance_id.
+
+  instance_id:
+    type: String
+    meaning: >
+      = CLIENT / store / instance (always synonyms of instance_id, never of deployment_id).
+      Never null (sorting key). Format depends on deployment_id:
+        - deployment_id = 'DEPLOYMENT_A'   -> short alphanumeric name (e.g. 'client_demo', 'client1')
+        - deployment_id = 'DEPLOYMENT_B' -> short alphanumeric name (e.g. 'client_demo', 'client1')
+
+  query_verbatim:
+    type: String
+    nullable: true
+    meaning: >
+      Text of the search the add-to-cart is associated with, as typed by the user.
+      It is the ONLY search-text field to use. Always ignore query_tokenized, query_normalized,
+      query_canonical, query_facets.
+      Case-sensitive in GROUP BY: for aggregates of "most added-to-cart terms" use
+      lowerUTF8(query_verbatim), unless the exact variants are explicitly requested.
+
+
+  query_origin:
+    type: String
+    nullable: true
+    meaning: >
+      Origin of the search the add-to-cart is associated with. Format "category:subcategory"
+      as in fact_search_queries/fact_clicks (some values have no subcategory, e.g. 'default').
+      Example categories seen in the catalog: cat1, category1, cat2 NOTE: the
+      value vocabulary may NOT match fact_search_queries/fact_clicks 1:1; do not assume direct
+      comparability of subcategories without verifying against real data.
+    rules:
+      - "To filter ONE specific category: WHERE query_origin LIKE 'category%'"
+      - >
+        For several categories: FORBIDDEN to use query_origin IN (...). Use LIKE with OR:
+        (query_origin LIKE 'cat1%' OR query_origin LIKE 'cat2%' ...).
+      - >
+        To group "by origin category" (the part before ":"), ALWAYS use:
+        splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category
+      - >
+        query_origin is nullable and splitByChar fails on a nullable field: ALWAYS wrap it with
+        coalesce(query_origin, 'unknown') before splitByChar.
+
+  results_page:
+    type: Int32
+    meaning: >
+      Results page where the add-to-cart occurred. INDEXED FROM 0.
+      Inherited from fact_clicks (same tagging pipeline, not yet confirmed field-by-field for
+      this table): both results_page=0 AND results_page=1 count as "first page" (source
+      inconsistency between client integrations). For "% on first page":
+      countIf(results_page <= 1), NEVER countIf(results_page = 0).
+
+  result_position:
+    type: Int32
+    meaning: >
+      Position of the added-to-cart product within the results. INDEXED FROM 0
+      (0 = first position). CONFIRMED by the user: same 0-indexed behavior as in fact_clicks.
+    rules:
+      - >
+        For MRR (Mean Reciprocal Rank): ALWAYS use AVG(1.0 / (result_position + 1)).
+        NEVER 1.0/result_position directly (division by zero at position=0).
+      - "For 'Top N': use result_position <= (N-1), NOT result_position <= N."
+      - >
+        MRR (Mean Reciprocal Rank) NEVER means "Monthly/Mean Recurring Revenue" — it is a
+        ranking-quality metric, not a financial one. Do not mention "revenue" when narrating it.
+      - >
+        When asked for "average add-to-cart position" or "ranking quality": ALWAYS return mean +
+        median + p90 + MRR together (the distribution has a long tail).
+        - Mean:   AVG(result_position)
+        - Median: quantile(0.5)(result_position)
+        - p90:    quantile(0.9)(result_position)
+        - MRR:    AVG(1.0 / (result_position + 1))
+
+
+
+  is_success:
+    type: Bool
+    meaning: "Whether the add-to-cart event was successful."
+
+
+
+  product_id:
+    type: String
+    nullable: true
+    meaning: "Id of the product added to the cart."
+
+  product_title:
+    type: String
+    nullable: true
+    meaning: "Title of the product added to the cart."
+
+  product_url:
+    type: String
+    nullable: true
+    meaning: "URL of the product added to the cart."
+
+  session:
+    type: String
+    nullable: true
+    meaning: >
+      Session id where the add-to-cart happened. For unique sessions: COUNT(DISTINCT session).
+      Do NOT use for JOIN with fact_search_queries/fact_clicks in this project (excluded for
+      operational cost) — always use prior aggregation by instance_id/date/category.
+
+  added_at:
+    type: DateTime64(3, 'UTC')
+    meaning: >
+      Date and time the product was added to the cart. Never null (sorting key).
+      ALWAYS use this column for date filters on fact_add_to_carts
+      (NEVER searched_at or clicked_at, which belong to other tables).
+
+business_rules_join:
+  - >
+    NEVER do a row-by-row JOIN between fact_add_to_carts and fact_clicks/fact_search_queries
+    (using search_query_id or session). ALWAYS aggregate each table separately first
+    (instance_id + date + origin_category) and join those already-aggregated totals
+    (LEFT JOIN from the higher-volume table).
+  - "Click-to-cart rate: total_a2c * 100.0 / total_clicks (both already aggregated by the same dimension)"
+  - "Full-funnel conversion rate (search -> a2c): total_a2c * 100.0 / total_searches"

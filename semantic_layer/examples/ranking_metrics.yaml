@@ -1,0 +1,19 @@
+- question: "What is the average click position in DEPLOYMENT_A in the last 10 days?"
+  sql: >
+    SELECT AVG(result_position) AS mean, quantile(0.5)(result_position) AS median,
+           quantile(0.9)(result_position) AS p90, AVG(1.0 / (result_position + 1)) AS mrr
+    FROM fact_clicks WHERE deployment_id = 'DEPLOYMENT_A' AND clicked_at >= now() - INTERVAL 10 DAY
+
+- question: "What percentage of clicks is in the top 3 in DEPLOYMENT_B in the last 7 days?"
+  sql: >
+    SELECT (countIf(result_position <= 2) * 100.0 / count(*)) AS pct_clicks_top3
+    FROM fact_clicks WHERE deployment_id = 'DEPLOYMENT_B' AND clicked_at >= now() - INTERVAL 7 DAY
+
+- question: "Average click position by origin category in DEPLOYMENT_A in the last 10 days"
+  sql: >
+    SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+           AVG(result_position) AS mean, quantile(0.5)(result_position) AS median,
+           quantile(0.9)(result_position) AS p90, AVG(1.0 / (result_position + 1)) AS mrr
+    FROM fact_clicks
+    WHERE deployment_id = 'DEPLOYMENT_A' AND clicked_at >= now() - INTERVAL 10 DAY
+    GROUP BY origin_category ORDER BY mrr DESC

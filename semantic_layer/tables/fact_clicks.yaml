@@ -1,0 +1,83 @@
+table: fact_clicks
+description: >
+  Each row represents ONE CLICK a user made on a product, after a search.
+
+columns:
+  click_id:
+    type: String
+    meaning: "Unique identifier of the click. Key only."
+
+  deployment_id:
+    type: String
+    meaning: "Same as in fact_search_queries ('DEPLOYMENT_B' or 'DEPLOYMENT_A')."
+
+  instance_id:
+    type: String
+    meaning: "Same format and meaning as in fact_search_queries (= CLIENT)."
+
+  query_verbatim:
+    type: String
+    nullable: true
+    meaning: >
+      Text of the search associated with the click. 
+
+  query_origin:
+    type: String
+    nullable: true
+    meaning: >
+      Identical format and meaning as in fact_search_queries ("category:subcategory").
+      Directly comparable/joinable between the two tables. Same LIKE/coalesce/splitByChar rules
+      as in fact_search_queries.
+
+  results_page:
+    type: Int32
+    meaning: >
+      Results page where the click occurred. INDEXED FROM 0.
+      IMPORTANT (confirmed in the tagging source code): both results_page=0 AND results_page=1
+      are considered "first page" (source inconsistency between client integrations). For
+      "% on first page": countIf(results_page <= 1), NEVER countIf(results_page = 0).
+
+  result_position:
+    type: Int32
+    meaning: >
+      Position of the clicked product in the results. INDEXED FROM 0 (0 = first position).
+      Confirmed in source code (findability calculation): position=0 is treated as the real
+      first position.
+    rules:
+      - >
+        For MRR (Mean Reciprocal Rank): ALWAYS use AVG(1.0 / (result_position + 1)).
+        NEVER use 1.0/result_position directly (division by zero at position=0).
+      - "For 'Top N': use result_position <= (N-1), NOT result_position <= N."
+      - >
+        MRR (Mean Reciprocal Rank) NEVER means "Monthly/Mean Recurring Revenue" — it is a
+        ranking-quality metric, not a financial one. Do not mention "revenue" when narrating
+        MRR results.
+      - >
+        When asked for "average click position" or "ranking quality": ALWAYS return mean +
+        median + p90 + MRR together (never just the mean; the distribution has a long tail: a
+        few clicks at very high positions distort the mean but not the median).
+        - Mean:   AVG(result_position)
+        - Median: quantile(0.5)(result_position)
+        - p90:    quantile(0.9)(result_position)
+        - MRR:    AVG(1.0 / (result_position + 1))
+
+  is_success:
+    type: Bool
+    meaning: "Whether the click was successful."
+
+
+  product_id:
+    type: String
+    nullable: true
+    meaning: "Id of the clicked product."
+
+  session:
+    type: String
+    nullable: true
+    meaning: "Do NOT use for JOIN in this project (excluded for operational cost)."
+
+  clicked_at:
+    type: DateTime (UTC)
+    meaning: >
+      Date and time of the click. Never null. ALWAYS use this column for date filters on
+      fact_clicks (NEVER searched_at, which belongs to fact_search_queries).

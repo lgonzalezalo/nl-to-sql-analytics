@@ -1,0 +1,85 @@
+- question: "What is the CTR of ai_carousel in deployment_a in the last 7 days?"
+  sql: >
+    SELECT (c.total_clicks * 100.0 / s.total_searches) AS ctr
+    FROM (SELECT COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_A' AND query_origin LIKE 'ai_carousel%'
+            AND searched_at >= now() - INTERVAL 7 DAY) AS s,
+         (SELECT COUNT(*) AS total_clicks FROM fact_clicks
+          WHERE deployment_id = 'DEPLOYMENT_A' AND query_origin LIKE 'ai_carousel%'
+            AND clicked_at >= now() - INTERVAL 7 DAY) AS c
+
+- question: "Compare total searches and clicks per instance in deployment_b in the last 2 days"
+  sql: >
+    SELECT s.instance_id, s.total_searches, coalesce(c.total_clicks, 0) AS total_clicks
+    FROM (SELECT instance_id, COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_B' AND searched_at >= now() - INTERVAL 2 DAY
+          GROUP BY instance_id) AS s
+    LEFT JOIN (SELECT instance_id, COUNT(*) AS total_clicks FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_B' AND clicked_at >= now() - INTERVAL 2 DAY
+               GROUP BY instance_id) AS c ON s.instance_id = c.instance_id
+    ORDER BY s.total_searches DESC LIMIT 100
+
+- question: "What is the CTR by origin category in deployment_b in the last 7 days?"
+  sql: >
+    SELECT s.origin_category, coalesce(c.total_clicks, 0) * 100.0 / s.total_searches AS ctr
+    FROM (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                 COUNT(*) AS total_searches
+          FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_B' AND searched_at >= now() - INTERVAL 7 DAY
+          GROUP BY origin_category) AS s
+    LEFT JOIN (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                      COUNT(*) AS total_clicks
+               FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_B' AND clicked_at >= now() - INTERVAL 7 DAY
+               GROUP BY origin_category) AS c ON s.origin_category = c.origin_category
+    ORDER BY ctr DESC
+
+- question: "Compute the CTR for each instance in deployment_b in the last 3 days"
+  sql: >
+    SELECT s.instance_id, coalesce(c.total_clicks, 0) * 100.0 / s.total_searches AS ctr
+    FROM (SELECT instance_id, COUNT(*) AS total_searches FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_B' AND searched_at >= now() - INTERVAL 3 DAY
+          GROUP BY instance_id) AS s
+    LEFT JOIN (SELECT instance_id, COUNT(*) AS total_clicks FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_B' AND clicked_at >= now() - INTERVAL 3 DAY
+               GROUP BY instance_id) AS c ON s.instance_id = c.instance_id
+    ORDER BY ctr DESC LIMIT 100
+
+- question: "CTR per day, last 10 days in deployment_a for categories related_tag and next_query"
+  sql: >
+    SELECT s.day, s.origin_category, coalesce(c.total_clicks, 0) * 100.0 / s.total_searches AS ctr
+    FROM (SELECT searched_at::date AS day,
+                 splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                 COUNT(*) AS total_searches
+          FROM fact_search_queries
+          WHERE deployment_id = 'DEPLOYMENT_A'
+            AND (query_origin LIKE 'related_tag%' OR query_origin LIKE 'next_query%')
+            AND searched_at >= now() - INTERVAL 10 DAY
+          GROUP BY day, origin_category) AS s
+    LEFT JOIN (SELECT clicked_at::date AS day,
+                      splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                      COUNT(*) AS total_clicks
+               FROM fact_clicks
+               WHERE deployment_id = 'DEPLOYMENT_A'
+                 AND (query_origin LIKE 'related_tag%' OR query_origin LIKE 'next_query%')
+                 AND clicked_at >= now() - INTERVAL 10 DAY
+               GROUP BY day, origin_category) AS c
+      ON s.day = c.day AND s.origin_category = c.origin_category
+    ORDER BY s.day, ctr DESC LIMIT 100
+
+- question: "MRR and click-to-add-to-cart conversion by category in deployment_a, last 30 days"
+  sql: >
+    SELECT c.origin_category, c.total_clicks, c.mrr_click,
+           coalesce(a.total_a2c, 0) AS total_a2c, a.mrr_a2c,
+           coalesce(a.total_a2c, 0) * 100.0 / c.total_clicks AS conversion_rate
+    FROM (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                 AVG(1.0 / (result_position + 1)) AS mrr_click, COUNT(*) AS total_clicks
+          FROM fact_clicks
+          WHERE deployment_id = 'DEPLOYMENT_A' AND clicked_at >= now() - INTERVAL 30 DAY
+          GROUP BY origin_category) AS c
+    LEFT JOIN (SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+                      AVG(1.0 / (result_position + 1)) AS mrr_a2c, COUNT(*) AS total_a2c
+               FROM fact_add_to_carts
+               WHERE deployment_id = 'DEPLOYMENT_A' AND added_at >= now() - INTERVAL 30 DAY
+               GROUP BY origin_category) AS a ON c.origin_category = a.origin_category
+    ORDER BY conversion_rate DESC

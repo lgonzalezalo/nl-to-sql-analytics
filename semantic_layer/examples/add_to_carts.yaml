@@ -1,0 +1,34 @@
+- question: "How many add-to-cart events were there in DEPLOYMENT_A in the last 7 days?"
+  sql: >
+    SELECT COUNT(*) FROM fact_add_to_carts
+    WHERE deployment_id = 'DEPLOYMENT_A' AND added_at >= now() - INTERVAL 7 DAY
+
+- question: "Top 10 most added-to-cart products for clientA in the last 30 days"
+  sql: >
+    SELECT product_id, any(product_title) AS title, COUNT(*) AS times
+    FROM fact_add_to_carts
+    WHERE instance_id = 'clientA' AND added_at >= now() - INTERVAL 30 DAY
+    GROUP BY product_id ORDER BY times DESC LIMIT 10
+
+- question: "Add-to-cart events by origin category in DEPLOYMENT_B in the last 7 days"
+  sql: >
+    SELECT splitByChar(':', coalesce(query_origin, 'unknown'))[1] AS origin_category,
+           COUNT(*) AS total_a2c
+    FROM fact_add_to_carts
+    WHERE deployment_id = 'DEPLOYMENT_B' AND added_at >= now() - INTERVAL 7 DAY
+    GROUP BY origin_category ORDER BY total_a2c DESC
+
+- question: "Ranking quality of add-to-cart events in DEPLOYMENT_B in the last 30 days"
+  sql: >
+    SELECT AVG(result_position) AS mean,
+           quantile(0.5)(result_position) AS median,
+           quantile(0.9)(result_position) AS p90,
+           AVG(1.0 / (result_position + 1)) AS mrr
+    FROM fact_add_to_carts
+    WHERE deployment_id = 'DEPLOYMENT_B' AND added_at >= now() - INTERVAL 30 DAY
+
+- question: "What percentage of add-to-cart events happened on the first page in DEPLOYMENT_B  in the last 14 days"
+  sql: >
+    SELECT countIf(results_page <= 1) * 100.0 / count(*) AS pct_first_page
+    FROM fact_add_to_carts
+    WHERE deployment_id = 'DEPLOYMENT_B' AND added_at >= now() - INTERVAL 14 DAY
